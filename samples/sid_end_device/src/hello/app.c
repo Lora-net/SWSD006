@@ -11,18 +11,17 @@
 #include <sid_hal_reset_ifc.h>
 #include <sid_hal_memory_ifc.h>
 #if defined(CONFIG_GPIO)
-#include <state_notifier_gpio_backend.h>
+#include <state_notifier/notifier_gpio.h>
 #endif
 #if defined(CONFIG_LOG)
-#include <state_notifier_log_backend.h>
+#include <state_notifier/notifier_log.h>
 #endif
 #include <buttons.h>
 #include <zephyr/kernel.h>
 #include <zephyr/smf.h>
 #include <zephyr/logging/log.h>
 
-#include <json_printer.h>
-#include <sidTypes2Json.h>
+#include <json_printer/sidTypes2Json.h>
 #ifdef CONFIG_RADIO_LR11XX
 #include <halo_lr11xx_radio.h>	// radio_dbg pin
 #endif /* CONFIG_RADIO_LR11XX */
@@ -38,7 +37,6 @@ halo_drv_semtech_ctx_t *radio_ctx;
 static void on_sidewalk_event(bool in_isr, void *context)
 {
 	int err = sidewalk_event_send(SID_EVENT_SIDEWALK, NULL);
-	//sid_pal_gpio_toggle(radio_ctx->config->gpios.led_sniff);
 	if (err) {
 		LOG_ERR("Send event err %d", err);
 	};
@@ -98,6 +96,13 @@ static void on_sidewalk_msg_sent(const struct sid_msg_desc *msg_desc, void *cont
 		"on_msg_sent", JSON_OBJ(JSON_VAL_sid_msg_desc("sid_msg_desc", msg_desc, 0))))));
 
 	application_state_sending(&global_state_notifier, false);
+	sidewalk_msg_t *message = get_message_buffer(msg_desc->id);
+	if (message == NULL) {
+		LOG_ERR("failed to find message buffer to clean");
+		return;
+	}
+	sid_hal_free(message->msg.data);
+	sid_hal_free(message);
 }
 
 static void on_sidewalk_send_error(sid_error_t error, const struct sid_msg_desc *msg_desc,
@@ -110,6 +115,14 @@ static void on_sidewalk_send_error(sid_error_t error, const struct sid_msg_desc 
 				     JSON_VAL_sid_msg_desc("sid_msg_desc", msg_desc, 0)))))));
 
 	application_state_sending(&global_state_notifier, false);
+
+	sidewalk_msg_t *message = get_message_buffer(msg_desc->id);
+	if (message == NULL) {
+		LOG_ERR("failed to find message buffer to clean");
+		return;
+	}
+	sid_hal_free(message->msg.data);
+	sid_hal_free(message);
 }
 
 static void on_sidewalk_factory_reset(void *context)
@@ -135,7 +148,7 @@ static void on_sidewalk_status_changed(const struct sid_status *status, void *co
 	} else {
 		memcpy(new_status, status, sizeof(struct sid_status));
 	}
-	sidewalk_event_send(SID_EVENT_NEW_STATUS, new_status);
+	err = sidewalk_event_send(SID_EVENT_NEW_STATUS, new_status);
 
 	switch (status->state) {
 	case SID_STATE_READY:

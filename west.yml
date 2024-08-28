@@ -15,12 +15,12 @@ manifest:
     - name: nrf
       remote: ncs
       repo-path: sdk-nrf
-      revision: v2.6.1
+      revision: v2.7.0
       import: true
     - name: sidewalk
       remote: ncs
       repo-path: sdk-sidewalk
-      revision: v2.6.1
+      revision: v2.7.0
     - name: lbm431
       remote: lora-net
       repo-path: SWSD006

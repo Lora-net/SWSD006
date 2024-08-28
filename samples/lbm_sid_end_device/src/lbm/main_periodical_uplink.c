@@ -343,6 +343,8 @@ void state_lbm_run(void *o)
 		case SID_EVENT_TOGGLE_LBM_SIDEWALK:
 			smf_set_state(SMF_CTX(sm), &sid_states[STATE_SIDEWALK]);
 			break;
+		case SID_EVENT_REBOOT:
+			break;
 		case SID_EVENT_LAST:
 			break;
 	}

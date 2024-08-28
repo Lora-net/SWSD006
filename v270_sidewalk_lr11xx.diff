@@ -1,0 +1,89 @@
+diff -urN '--exclude=.git' '--exclude=build' '--exclude=.github' sidewalk/subsys/config/common/CMakeLists.txt lr_sidewalk/subsys/config/common/CMakeLists.txt
+--- sidewalk/subsys/config/common/CMakeLists.txt	2024-07-09 14:02:55.256569753 -0700
++++ lr_sidewalk/subsys/config/common/CMakeLists.txt	2024-07-08 14:18:06.339408639 -0700
+@@ -8,6 +8,8 @@
+ 
+ zephyr_library_sources_ifdef(CONFIG_SIDEWALK src/app_ble_config.c)
+ 
+-zephyr_library_sources_ifdef(CONFIG_SIDEWALK_SUBGHZ_SUPPORT src/app_subGHz_config.c)
++if(NOT DEFINED CONFIG_RADIO_LR11XX)
++	zephyr_library_sources_ifdef(CONFIG_SIDEWALK_SUBGHZ_SUPPORT src/app_subGHz_config.c)
++endif()
+ zephyr_library_sources_ifndef(CONFIG_SIDEWALK_SUBGHZ_SUPPORT src/app_subGHz_config_empty.c)
+ 
+diff -urN '--exclude=.git' '--exclude=build' '--exclude=.github' sidewalk/subsys/config/common/include/app_subGHz_config.h lr_sidewalk/subsys/config/common/include/app_subGHz_config.h
+--- sidewalk/subsys/config/common/include/app_subGHz_config.h	2024-07-09 14:02:55.256569753 -0700
++++ lr_sidewalk/subsys/config/common/include/app_subGHz_config.h	2024-07-08 14:16:00.309593858 -0700
+@@ -16,11 +16,16 @@
+ #ifndef APP_900_CONFIG_H
+ #define APP_900_CONFIG_H
+ 
+-#include <sx126x_config.h>
+ #include <sid_pal_mfg_store_ifc.h>
+ #include <sid_900_cfg.h>
+-
++#ifdef CONFIG_RADIO_LR11XX
++#include <lr11xx_config.h>
++const radio_lr11xx_device_config_t* get_radio_cfg(void);
++#else
++#include <sx126x_config.h>
+ const radio_sx126x_device_config_t* get_radio_cfg(void);
++#endif
++
+ const sid_pal_mfg_store_region_t* get_mfg_cfg(void);
+ struct sid_sub_ghz_links_config* app_get_sub_ghz_config(void);
+ #endif
+diff -urN '--exclude=.git' '--exclude=build' '--exclude=.github' sidewalk/subsys/sal/common/sid_pal_ifc/sid_pal_platform_init_types.h lr_sidewalk/subsys/sal/common/sid_pal_ifc/sid_pal_platform_init_types.h
+--- sidewalk/subsys/sal/common/sid_pal_ifc/sid_pal_platform_init_types.h	2024-07-09 14:02:55.256569753 -0700
++++ lr_sidewalk/subsys/sal/common/sid_pal_ifc/sid_pal_platform_init_types.h	2024-07-08 14:24:11.326089757 -0700
+@@ -17,13 +17,21 @@
+ #define SID_PAL_PLATFORM_INIT_TYPES_H
+ 
+ #if defined(CONFIG_SIDEWALK_SUBGHZ_SUPPORT)
+-#include <sx126x_config.h>
++	#if defined(CONFIG_RADIO_LR11XX)
++	#include <lr11xx_config.h>
++	#else
++	#include <sx126x_config.h>
++	#endif
+ #endif
+ 
+ typedef struct {
+ //place holder for platform specific init parameters
+ #if defined(CONFIG_SIDEWALK_SUBGHZ_SUPPORT)
++	#if defined(CONFIG_RADIO_LR11XX)
++    radio_lr11xx_device_config_t * radio_cfg;
++	#else
+     radio_sx126x_device_config_t * radio_cfg;
++	#endif
+ #endif
+ } platform_specific_init_parameters_t;
+ 
+diff -urN '--exclude=.git' '--exclude=build' '--exclude=.github' sidewalk/subsys/sal/sid_pal/src/sid_common.c lr_sidewalk/subsys/sal/sid_pal/src/sid_common.c
+--- sidewalk/subsys/sal/sid_pal/src/sid_common.c	2024-07-09 14:02:55.256569753 -0700
++++ lr_sidewalk/subsys/sal/sid_pal/src/sid_common.c	2024-07-08 14:20:32.697876640 -0700
+@@ -12,7 +12,11 @@
+ #endif /* defined(CONFIG_SOC_SERIES_NRF53X) && defined(CONFIG_SIDEWALK_SUBGHZ_SUPPORT) */
+ 
+ #if defined(CONFIG_SIDEWALK_SUBGHZ_SUPPORT)
+-#include <sx126x_config.h>
++	#if defined(CONFIG_RADIO_LR11XX)
++		#include <lr11xx_config.h>
++	#else
++		#include <sx126x_config.h>
++	#endif
+ #endif
+ 
+ #include <zephyr/kernel.h>
+@@ -31,7 +35,11 @@
+ 		return SID_ERROR_INCOMPATIBLE_PARAMS;
+ 	}
+ #if defined(CONFIG_SIDEWALK_SUBGHZ_SUPPORT)
++	#if defined(CONFIG_RADIO_LR11XX)
++	set_radio_lr11xx_device_config(platform_init_parameters->radio_cfg);
++	#else
+ 	set_radio_sx126x_device_config(platform_init_parameters->radio_cfg);
++	#endif
+ #if defined(CONFIG_SOC_SERIES_NRF53X)
+ 	(void)bt_enable(NULL);
+ 	(void)bt_disable();

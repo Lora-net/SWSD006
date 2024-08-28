@@ -3,34 +3,43 @@
  *
  * SPDX-License-Identifier: LicenseRef-Nordic-5-Clause
  */
-
-#include <sid_pal_crypto_ifc.h>
-#include <stdio.h>
-
-#include <app_mfg_config.h>
-#include <sid_pal_common_ifc.h>
 #include <sidewalk.h>
-#include <nordic_dfu.h>
-#ifdef CONFIG_SID_END_DEVICE_CLI
-#include <cli/app_dut.h>
-#endif
-#ifdef CONFIG_SID_END_DEVICE_PERSISTENT_LINK_MASK
-#include <settings_utils.h>
-#endif
-#include <zephyr/kernel.h>
-#include <zephyr/smf.h>
-#include <zephyr/logging/log.h>
-#include <sidTypes2str.h>
-#ifdef CONFIG_SIDEWALK_SUBGHZ_SUPPORT
-#include <app_subGHz_config.h>
-#endif
-#include <file_transfer.h>
-
+#include <sid_pal_common_ifc.h>
 #include <sid_hal_memory_ifc.h>
+
 #ifdef CONFIG_SMTC_CLI
 #include <halo_lr11xx_radio.h>
 extern volatile int csuso;
 #endif /* CONFIG_SMTC_CLI */
+
+#include <json_printer/sidTypes2Json.h>
+#include <sidewalk_dfu/nordic_dfu.h>
+#include <app_mfg_config.h>
+#ifdef CONFIG_SIDEWALK_SUBGHZ_SUPPORT
+#include <app_subGHz_config.h>
+#endif /* CONFIG_SIDEWALK_SUBGHZ_SUPPORT */
+#ifdef CONFIG_SIDEWALK_FILE_TRANSFER
+#include <sbdt/file_transfer.h>
+#include <sid_bulk_data_transfer_api.h>
+#ifdef CONFIG_SIDEWALK_FILE_TRANSFER_DFU
+#include <sidewalk_dfu/nordic_dfu_img.h>
+#include <zephyr/dfu/mcuboot.h>
+#endif /* CONFIG_SIDEWALK_FILE_TRANSFER_DFU */
+#include <stdio.h> // print hash only
+#include <sid_pal_crypto_ifc.h> // print hash only
+#endif /* CONFIG_SIDEWALK_FILE_TRANSFER */
+#ifdef CONFIG_SID_END_DEVICE_CLI
+#include <cli/app_dut.h>
+#endif /* CONFIG_SID_END_DEVICE_CLI */
+#ifdef CONFIG_SID_END_DEVICE_PERSISTENT_LINK_MASK
+#include <settings_utils.h>
+#endif /* CONFIG_SID_END_DEVICE_PERSISTENT_LINK_MASK */
+
+#include <zephyr/kernel.h>
+#include <zephyr/smf.h>
+#include <zephyr/sys/reboot.h>
+#include <zephyr/logging/log.h>
+#include <zephyr/logging/log_ctrl.h>
 
 #ifdef CONFIG_SIDEWALK_LINK_MASK_BLE
 #define DEFAULT_LM (uint32_t)(SID_LINK_TYPE_1)
@@ -47,7 +56,32 @@ LOG_MODULE_REGISTER(sidewalk_app, CONFIG_SIDEWALK_LOG_LEVEL);
 static struct k_thread sid_thread;
 K_THREAD_STACK_DEFINE(sid_thread_stack, CONFIG_SIDEWALK_THREAD_STACK_SIZE);
 
-//extern uint32_t radio_dbg;
+sys_slist_t pending_message_list = SYS_SLIST_STATIC_INIT(&pending_message_list);
+K_MUTEX_DEFINE(pending_message_list_mutex);
+
+sidewalk_msg_t *get_message_buffer(uint16_t message_id)
+{
+	sidewalk_msg_t *pending_message;
+	sidewalk_msg_t *iterator;
+	int mutex_err =
+		k_mutex_lock(&pending_message_list_mutex, k_is_in_isr() ? K_NO_WAIT : K_FOREVER);
+	if (mutex_err != 0) {
+		LOG_ERR("Failed to lock mutex for message list");
+		return NULL;
+	}
+	SYS_SLIST_FOR_EACH_CONTAINER_SAFE (&pending_message_list, pending_message, iterator, node) {
+		if (pending_message->desc.id == message_id) {
+			if (sys_slist_find_and_remove(&pending_message_list,
+						      &pending_message->node) == false) {
+				LOG_ERR("Failed to remove pending message from list");
+			};
+			k_mutex_unlock(&pending_message_list_mutex);
+			return pending_message;
+		}
+	}
+	k_mutex_unlock(&pending_message_list_mutex);
+	return NULL;
+}
 
 typedef struct sm_s {
 	struct smf_ctx ctx;
@@ -64,6 +98,7 @@ enum state {
 
 static void state_sidewalk_run(void *o);
 static void state_sidewalk_entry(void *o);
+static void state_sidewalk_exit(void *o);
 static void state_dfu_entry(void *o);
 static void state_dfu_run(void *o);
 #ifdef CONFIG_SMTC_CLI
@@ -72,10 +107,11 @@ static void state_smtc_run(void *o);
 #endif /* CONFIG_SMTC_CLI */
 
 static const struct smf_state sid_states[] = {
-	[STATE_SIDEWALK] = SMF_CREATE_STATE(state_sidewalk_entry, state_sidewalk_run, NULL),
-	[STATE_DFU] = SMF_CREATE_STATE(state_dfu_entry, state_dfu_run, NULL),
+	[STATE_SIDEWALK] = SMF_CREATE_STATE(state_sidewalk_entry, state_sidewalk_run,
+					    state_sidewalk_exit, NULL, NULL),
+	[STATE_DFU] = SMF_CREATE_STATE(state_dfu_entry, state_dfu_run, NULL, NULL, NULL),
 #ifdef CONFIG_SMTC_CLI
-	[STATE_SMTC] = SMF_CREATE_STATE(state_smtc_entry, state_smtc_run, NULL),
+	[STATE_SMTC] = SMF_CREATE_STATE(state_smtc_entry, state_smtc_run, NULL, NULL, NULL),
 #endif /* CONFIG_SMTC_CLI */
 };
 
@@ -94,7 +130,7 @@ static void state_sidewalk_entry(void *o)
 			(radio_lr11xx_device_config_t *)get_radio_cfg(),
 #else
 			(radio_sx126x_device_config_t *)get_radio_cfg(),
-#endif  /* CONFIG_RADIO_LR11XX */
+#endif /* CONFIG_RADIO_LR11XX */
 #endif /* CONFIG_SIDEWALK_SUBGHZ_SUPPORT */
 	};
 
@@ -132,7 +168,6 @@ static void state_sidewalk_entry(void *o)
 		(SID_LINK_TYPE_3 & sm->sid->config.link_mask) ? "LoRa" :
 		(SID_LINK_TYPE_2 & sm->sid->config.link_mask) ? "FSK" :
 								"BLE");
-
 	e = sid_init(&sm->sid->config, &sm->sid->handle);
 	if (e) {
 		LOG_ERR("sid init err %d", (int)e);
@@ -146,10 +181,7 @@ static void state_sidewalk_entry(void *o)
 	}
 #endif /* CONFIG_SMTC_CLI */
 
-#ifdef CONFIG_SIDEWALK_FILE_TRANSFER
-	app_file_transfer_demo_init(sm->sid->handle);
-#endif
-	e = sid_start(sm->sid->handle, sm->sid->config.link_mask); // state_sidewalk_entry()
+	e = sid_start(sm->sid->handle, sm->sid->config.link_mask);
 	if (e) {
 		LOG_ERR("sid start err %d", (int)e);
 	}
@@ -181,6 +213,16 @@ static void state_sidewalk_entry(void *o)
 #endif /* CONFIG_SID_END_DEVICE_AUTO_CONN_REQ */
 
 #endif /* CONFIG_SIDEWALK_AUTO_START */
+
+#ifdef CONFIG_SIDEWALK_FILE_TRANSFER_DFU
+	int dfu_err = boot_write_img_confirmed();
+	if (dfu_err) {
+		LOG_ERR("img confirm fail %d", dfu_err);
+	}
+#endif /* CONFIG_SIDEWALK_FILE_TRANSFER_DFU */
+#ifdef CONFIG_SIDEWALK_FILE_TRANSFER
+	app_file_transfer_demo_init(((sm_t *)o)->sid->handle);
+#endif /* CONFIG_SIDEWALK_FILE_TRANSFER */
 }
 
 static void state_sidewalk_run(void *o)
@@ -190,9 +232,7 @@ static void state_sidewalk_run(void *o)
 
 	switch (sm->event.id) {
 	case SID_EVENT_SIDEWALK: {
-		//sid_pal_gpio_write(radio_dbg, 0);
 		e = sid_process(sm->sid->handle);
-		//sid_pal_gpio_write(radio_dbg, 1);
 		if (e) {
 			LOG_ERR("sid process err %d", (int)e);
 		}
@@ -249,7 +289,7 @@ static void state_sidewalk_run(void *o)
 #ifdef CONFIG_SIDEWALK_FILE_TRANSFER
 		app_file_transfer_demo_init(sm->sid->handle);
 #endif
-		e = sid_start(sm->sid->handle, sm->sid->config.link_mask); // state_sidewalk_run() SID_EVENT_LINK_SWITCH
+		e = sid_start(sm->sid->handle, sm->sid->config.link_mask);
 		if (e) {
 			LOG_ERR("sid start err %d", (int)e);
 		}
@@ -312,8 +352,13 @@ static void state_sidewalk_run(void *o)
 			LOG_ERR("sid send err %d", (int)e);
 		}
 		LOG_DBG("sid send (type: %d, id: %u)", (int)p_msg->desc.type, p_msg->desc.id);
-		sid_hal_free(p_msg->msg.data);
-		sid_hal_free(p_msg);
+		int mutex_err = k_mutex_lock(&pending_message_list_mutex, K_FOREVER);
+		if (mutex_err != 0) {
+			LOG_ERR("Failed to lock mutex for message list");
+			break;
+		}
+		sys_slist_append(&pending_message_list, &p_msg->node);
+		k_mutex_unlock(&pending_message_list_mutex);
 	} break;
 	case SID_EVENT_CONNECT: {
 		if (!(sm->sid->config.link_mask & SID_LINK_TYPE_1)) {
@@ -327,17 +372,20 @@ static void state_sidewalk_run(void *o)
 	} break;
 	case SID_EVENT_FILE_TRANSFER: {
 #ifdef CONFIG_SIDEWALK_FILE_TRANSFER
-		struct data_received_args *args = (struct data_received_args *)sm->event.ctx;
-		if (!args) {
+		sidewalk_transfer_t *transfer = (sidewalk_transfer_t *)sm->event.ctx;
+		if (!transfer) {
 			LOG_ERR("File transfer event data is NULL");
 			break;
 		}
-		LOG_INF("Received file Id %d; buffer size %d; file offset %d", args->desc.file_id,
-			args->buffer->size, args->desc.file_offset);
+
+		LOG_INF("Received file Id %d; buffer size %d; file offset %d", transfer->file_id,
+			transfer->data_size, transfer->file_offset);
+
+		// print data hash
 		uint8_t hash_out[32];
 		sid_pal_hash_params_t params = { .algo = SID_PAL_HASH_SHA256,
-						 .data = args->buffer->data,
-						 .data_size = args->buffer->size,
+						 .data = transfer->data,
+						 .data_size = transfer->data_size,
 						 .digest = hash_out,
 						 .digest_size = sizeof(hash_out) };
 
@@ -354,14 +402,45 @@ static void state_sidewalk_run(void *o)
 			LOG_INF("SHA256: %s", hex_str);
 		}
 
-		sid_error_t ret = sid_bulk_data_transfer_release_buffer(
-			sm->sid->handle, args->desc.file_id, args->buffer);
-		if (ret != SID_ERROR_NONE) {
-			LOG_ERR("sid_bulk_data_transfer_release_buffer returned %s",
-				SID_ERROR_T_STR(ret));
+#ifdef CONFIG_SIDEWALK_FILE_TRANSFER_DFU
+		int err = nordic_dfu_img_write(transfer->file_offset, transfer->data,
+					       transfer->data_size);
+
+		if (err) {
+			LOG_ERR("Fail to write img %d", err);
+			err = nordic_dfu_img_cancel();
+			if (err) {
+				LOG_ERR("Fail to complete dfu %d", err);
+			}
+			e = sid_bulk_data_transfer_cancel(
+				sm->sid->handle, transfer->file_id,
+				SID_BULK_DATA_TRANSFER_REJECT_REASON_FILE_TOO_BIG);
+			if (e != SID_ERROR_NONE) {
+				LOG_ERR("sbdt cancel ret %s", SID_ERROR_T_STR(e));
+			}
+
+			sid_hal_free(transfer);
+			break;
 		}
-		sid_hal_free(args);
+#endif /* CONFIG_SIDEWALK_FILE_TRANSFER_DFU */
+		const struct sid_bulk_data_transfer_buffer sbdt_buffer = {
+			.data = transfer->data,
+			.size = transfer->data_size,
+		};
+		e = sid_bulk_data_transfer_release_buffer(sm->sid->handle, transfer->file_id,
+							  &sbdt_buffer);
+		if (e != SID_ERROR_NONE) {
+			LOG_ERR("sbdt release ret %s", SID_ERROR_T_STR(e));
+		}
+
+		// free event context
+		sid_hal_free(transfer);
 #endif /* CONFIG_SIDEWALK_FILE_TRANSFER */
+	} break;
+	case SID_EVENT_REBOOT: {
+		LOG_INF("Rebooting...");
+		LOG_PANIC();
+		sys_reboot(SYS_REBOOT_WARM);
 	} break;
 	case SID_EVENT_LAST:
 		break;
@@ -398,6 +477,25 @@ static void state_smtc_run(void *o)
 	}
 }
 #endif /* CONFIG_SMTC_CLI */
+
+static void state_sidewalk_exit(void *o)
+{
+	int mutex_err = k_mutex_lock(&pending_message_list_mutex, K_FOREVER);
+	if (mutex_err != 0) {
+		LOG_ERR("Failed to lock mutex for message list");
+		return;
+	}
+	sys_snode_t *list_element = sys_slist_get(&pending_message_list);
+
+	while (list_element != NULL) {
+		sidewalk_msg_t *message = SYS_SLIST_CONTAINER(list_element, message, node);
+		sid_hal_free(message->msg.data);
+		sid_hal_free(message);
+
+		list_element = sys_slist_get(&pending_message_list);
+	}
+	k_mutex_unlock(&pending_message_list_mutex);
+}
 
 static void state_dfu_entry(void *o)
 {
@@ -437,6 +535,7 @@ static void state_dfu_run(void *o)
 	case SID_EVENT_LINK_SWITCH:
 	case SID_EVENT_SIDEWALK:
 	case SID_EVENT_FILE_TRANSFER:
+	case SID_EVENT_REBOOT:
 		LOG_INF("Operation not supported in DFU mode");
 		break;
 	case SID_EVENT_LAST:
@@ -489,8 +588,17 @@ int sidewalk_event_send(sidewalk_event_t event, void *ctx)
 		.ctx = ctx,
 	};
 
-	const int result = k_msgq_put(&sid_sm.msgq, (void *)&ctx_event, K_NO_WAIT);
+	k_timeout_t timeout = K_NO_WAIT;
+
+#ifdef CONFIG_SIDEWALK_THREAD_QUEUE_TIMEOUT
+	if (!k_is_in_isr()) {
+		timeout = K_MSEC(CONFIG_SIDEWALK_THREAD_QUEUE_TIMEOUT_VALUE);
+	}
+#endif /* CONFIG_SIDEWALK_THREAD_QUEUE_TIMEOUT */
+
+	const int result = k_msgq_put(&sid_sm.msgq, (void *)&ctx_event, timeout);
 	LOG_DBG("sidewalk_event_send event = %d (%s), context = %p, k_msgq_put result %d", event,
 		SIDEWALK_EVENT_T_STR(event), ctx, result);
+
 	return result;
 }
