@@ -9,12 +9,12 @@
 //#include <cli/app_dut.h>
 //#endif
 #if defined(CONFIG_GPIO)
-#include <state_notifier_gpio_backend.h>
+#include <state_notifier/notifier_gpio.h>
 #endif
 #if defined(CONFIG_LOG)
-#include <state_notifier_log_backend.h>
+#include <state_notifier/notifier_log.h>
 #endif
-#include <sidTypes2Json.h>
+#include <json_printer/sidTypes2Json.h>
 
 #include <zephyr/logging/log.h>
 LOG_MODULE_REGISTER(app_lbm_sid, CONFIG_SIDEWALK_LOG_LEVEL);

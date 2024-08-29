@@ -271,6 +271,8 @@ void state_nav3_run(void *o)
 			break;
 		case SID_EVENT_TOGGLE_LBM_SIDEWALK:
 			break;
+		case SID_EVENT_REBOOT:
+			break;
 		case SID_EVENT_LAST:
 			break;
 	} // ..switch (sm->event.id)

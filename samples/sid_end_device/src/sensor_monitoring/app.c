@@ -71,6 +71,13 @@ static void on_sidewalk_msg_received(const struct sid_msg_desc *msg_desc, const 
 static void on_sidewalk_msg_sent(const struct sid_msg_desc *msg_desc, void *context)
 {
 	LOG_DBG("sent message(type: %d, id: %u)", (int)msg_desc->type, msg_desc->id);
+	sidewalk_msg_t *message = get_message_buffer(msg_desc->id);
+	if (message == NULL) {
+		LOG_ERR("failed to find message buffer to clean");
+		return;
+	}
+	sid_hal_free(message->msg.data);
+	sid_hal_free(message);
 }
 
 static void on_sidewalk_send_error(sid_error_t error, const struct sid_msg_desc *msg_desc,
@@ -78,6 +85,13 @@ static void on_sidewalk_send_error(sid_error_t error, const struct sid_msg_desc 
 {
 	LOG_ERR("Send message err %d", (int)error);
 	LOG_DBG("Failed to send message(type: %d, id: %u)", (int)msg_desc->type, msg_desc->id);
+	sidewalk_msg_t *message = get_message_buffer(msg_desc->id);
+	if (message == NULL) {
+		LOG_ERR("failed to find message buffer to clean");
+		return;
+	}
+	sid_hal_free(message->msg.data);
+	sid_hal_free(message);
 }
 
 static void on_sidewalk_factory_reset(void *context)
@@ -151,10 +165,23 @@ static void on_sidewalk_status_changed(const struct sid_status *status, void *co
 
 static void sidewalk_btn_handler(uint32_t event)
 {
-	int err = sidewalk_event_send((app_event_t)event, NULL);
+	int err = sidewalk_event_send((sidewalk_event_t)event, NULL);
 	if (err) {
 		LOG_ERR("Send event err %d", err);
+		return;
 	};
+
+	if (SID_EVENT_NORDIC_DFU == event) {
+		static bool in_dfu;
+		if (in_dfu) {
+			in_dfu = false;
+			k_timer_start(&notify_timer, K_MSEC(NOTIFY_TIMER_DURATION_MS),
+				      K_MSEC(CONFIG_SID_END_DEVICE_NOTIFY_DATA_PERIOD_MS));
+		} else {
+			in_dfu = true;
+			k_timer_stop(&notify_timer);
+		}
+	}
 }
 
 static int app_buttons_init(void)

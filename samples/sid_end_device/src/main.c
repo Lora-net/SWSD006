@@ -8,9 +8,6 @@
 #include <zephyr/logging/log.h>
 #include <sidewalk_version.h>
 
-#include <zephyr/logging/log.h>
-LOG_MODULE_REGISTER(main, CONFIG_SIDEWALK_LOG_LEVEL);
-
 int main(void)
 {
 	PRINT_SIDEWALK_VERSION();

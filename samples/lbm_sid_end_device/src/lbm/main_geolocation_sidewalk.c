@@ -575,6 +575,8 @@ void state_nav3_run(void *o)
 		send_scan_result(sm->sid);
 		break;
 #endif /* NAV3_SEND */
+	case SID_EVENT_REBOOT: {
+	} break;
 	case SID_EVENT_LAST:
 		break;
 	} // ..switch (sm->event.id)

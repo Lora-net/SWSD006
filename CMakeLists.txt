@@ -19,7 +19,7 @@ if(CONFIG_RADIO_LR11XX)
         message( STATUS "patch needs to be applied?  ret=" ${ret})
         Set(script_name ${CMAKE_CURRENT_SOURCE_DIR}/scripts/patch_ng.py)
         Set(args "-p 1")
-        Set(pfile ${CMAKE_CURRENT_SOURCE_DIR}/v261_nRF52840_sidewalk_lr11xx.diff)
+        Set(pfile ${CMAKE_CURRENT_SOURCE_DIR}/v270_sidewalk_lr11xx.diff)
         execute_process(
             COMMAND ${Python3_EXECUTABLE} ${script_name} ${args} ${pfile}
             WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/../sidewalk

@@ -12,6 +12,9 @@
 #include <sid_clock_ifc.h>
 #include <sid_pal_timer_ifc.h>
 
+#include <zephyr/kernel.h>
+#include <zephyr/sys/slist.h>
+
 #define LBM_STACK_ID 0
 
 enum state {
@@ -42,6 +45,7 @@ typedef enum {
 #ifdef NAV3_SEND
 	/*    */ SID_EVENT_NAV3_SEND,
 #endif /* !NAV3_SEND */
+	/*    */ SID_EVENT_REBOOT,
 	/*    */ SID_EVENT_LAST,
 } sidewalk_event_t;
 
@@ -104,6 +108,7 @@ typedef struct sm_s {
 } sm_t;
 
 typedef struct {
+	sys_snode_t node;
 	struct sid_msg msg;
 	struct sid_msg_desc desc;
 } sidewalk_msg_t;
@@ -114,9 +119,18 @@ typedef struct {
 	size_t data_len;
 } sidewalk_option_t;
 
+typedef struct {
+	uint32_t file_id;
+	size_t file_offset;
+	void *data;
+	size_t data_size;
+} sidewalk_transfer_t;
+
 void sidewalk_start(sidewalk_ctx_t *context);
 
 int sidewalk_event_send(sidewalk_event_t event, void *ctx);
+
+sidewalk_msg_t *get_message_buffer(uint16_t message_id);
 
 extern const struct smf_state sid_states[];
 void app_event_lbm(void);

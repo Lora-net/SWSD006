@@ -1,8 +1,8 @@
-# SWSD006 - LR11xx Multi-stack Software Development Kit for nRF52840
+# SWSD006 - LR11xx Multi-stack Software Development Kit for nRF52840 & nRF54L15
 
 SWSD006 is a collection of driver, protocol stack and utility software that facilitates development of Sidewalk
 applications. The software includes numerous examples of how to leverage the unique capabilities of Semtech's LR11xx silicon. 
-While the software targets the Nordic nRF52840 MCU, it is designed and distributed as a "full-source" offering, it enables users to modify
+While the software targets the Nordic SoC, it is designed and distributed as a "full-source" offering, it enables users to modify
 the contents across multiple layers of software stack. Potential modifications include re-targeting of host MCU and LR11xx silicon,
 changes to the platform abstraction layer and enhancement of the packet fragmentation scheme. 
 Please note that while software enhancement is enabled and encouraged, validation of described functionality was exclusively performed on the specified silicon variants and software component versions.
@@ -11,7 +11,7 @@ This repository implements the following functionality:
 - LR11xx transceiver silicon support for Sidewalk MAC v1.16 CSS and FSK modulation 
 - Drivers and examples demonstrating WIFI/GNSS NAV3 geolocation features of LR11xx silicon
 - LoRaWAN Class A multi-stack operation using SWL2001 - LoRa Basics Modem 4.5.0; programmatic control over both LoRaWAN and Sidewalk stacks in one firmware image
-- LR11xx transceiver firmware upgrade via SWTL001 port to nRF52840
+- LR11xx transceiver firmware upgrade via SWTL001 port to nRF52840 (or nRF54L15)
 - LoRaWAN Class A + WIFI/GNSS NAV3 operation example
 - An example of packet fragmentation and re-assembly (overcomes CSS packet size limitations in Sidewalk)
 - AWS lambda example code demonstrating End-to-End handling of LoRa EDGE application data: from transceiver to cloud service 
@@ -39,6 +39,7 @@ west init -m https://github.com/Lora-net/SWSD006 --mr v2.6.1 my-workspace
 # update nRF Connect SDK modules
 cd my-workspace
 west update
+west config build.sysbuild True
 ```
 If you intend to build a LoRa Basics Modem project on the windows platform,  decide on a workspace location as near the root directory as possible in order to prevent path lengths that exceed the capability of the zephyr build system on windows.  This is not a concern on other platforms such as linux.
 ### configuring project for LR11xx
@@ -55,8 +56,36 @@ LR1121 device would typically be used with an XTAL, since it doesnt have GNSS fu
 All radio other configuration is declared in ``app_subGHz_config_lr11xx.c``, For example if you wanted to use the radio's LDO instead of it's DC-DC, you can modify the ``.regulator_mode = `` to ``LR11XX_SYSTEM_REG_MODE_LDO``
 ### Available example applications:
 all example apps are built using ``west build -b <board> -- -DOVERLAY_CONFIG=foobar.conf``.  The app to build is selected by adding ``-- -DOVERLAY_CONFIG=foobar.conf``
- * the full build command, for example: ``west build -b nrf52840dk_nrf52840 -- -DOVERLAY_CONFIG=overlay-nav3sid.conf``
-#### apps provided by Nordic:
+ * the full build command, for example:
+   | Hardware platforms | Board name | Build command |
+   | -------------- | ---------- | -------------- |
+   | nRF52840 DK    | nrf52840dk  | ``west build -p -b nrf52840dk/nrf52840 -- -DOVERLAY_CONFIG=overlay-nav3sid.conf`` |
+   | nRF54L15 PDK   | nrf54l15pdk | ``west build -p -b nrf54l15pdk/nrf54l15/cpuapp -- -DOVERLAY_CONFIG=overlay-nav3sid.conf`` |
+
+#### nRF54L15 PDK pinout:
+For nRF54L15 PDK revision v0.3.0/0.7.0 use the following GPIO configuration:
+
+| nRF54L15 PDK | LR1110MB1LCKS |
+| -------------- | ---------- |
+| P2.06   | SCK  |
+| P1.11   | MISO |
+| P2.08   | MOSI |
+| P2.10   | CS |
+| P0.02   | LR_NRESET |
+| P0.00   | BUSY |
+| P0.01   | ACC_INT1 |
+| P0.03   | DIO9 |
+| P1.12   | LNA_CTRL_MCU |
+
+> **NOTE**
+>
+> To use the suggested pins, disable ``VCOM0`` (not used by samples) through the [Board Configurator](https://docs.nordicsemi.com/bundle/nrf-connect-board-configurator/page/index.html) tool in the nRF Connect for Desktop.
+> This step is required for the shield to work as some pins are connected to ``VCOM0`` by default.
+>
+> See the picture below for ``VCOM0`` suggested configuration:
+> ![VCOM0 configuration](./pics/board_configurator_nrf54l15_0_3_0.png)
+
+#### Apps provided by Nordic:
 from the directory ``samples/sid_end_device`` enables LR11xx in ``prj.conf`` -->
 * hello
    * ``-DOVERLAY_CONFIG=overlay-hello.conf``
@@ -64,17 +93,18 @@ from the directory ``samples/sid_end_device`` enables LR11xx in ``prj.conf`` -->
    * ``-DOVERLAY_CONFIG=overlay-demo.conf``
 * dut, aka ``sid_dut``
    * ``-DOVERLAY_CONFIG=overlay-dut.conf``
-#### apps added by Semtech:
+#### Apps added by Semtech:
 from the directory ``samples/lbm_sid_end_device`` -->
 * lora basics modem (lorawan end device), running in sidewalk environment
    * ``-DOVERLAY_CONFIG=overlay-lbm.conf``
 * NAV3 running simultanously with sidewalk (aka NAV3 in bypass mode):
   * ``-DOVERLAY_CONFIG=overlay-nav3sid.conf``
 * NAV3 running in lora basics modem:
-  * `-DOVERLAY_CONFIG=overlay-nav3lbm.conf``
+  * ``-DOVERLAY_CONFIG=overlay-nav3lbm.conf``
  * LR11xx firmware update, and almanac erase:
    * build in ``samples/SWTL001``directory
  
+
 ## GNSS Performance Evaluation Notice
 
 The included GNSS example source code is provided solely to demonstrate the GNSS scan functionality under ideal conditions.  The source code and GNSS scan results are not representative of the optimal configuration or performance characteristics  of the silicon. The LR11xx product family is flexible and can be embodied and configured in a multitude of ways to realize  various trade-offs regarding performance, battery life, PCB size, cost, etc. The GNSS example included in this release and the corresponding evaluation  kits are designed & configured by the included source code in a default capacity which is sufficient to demonstrate functional GNSS scan capability only. Care must be taken if/when attempting to assess performance characteristics of GNSS scan functionality and we strongly encourage those conducting such analysis to contact Semtech via the provided support channels so that we can ensure appropriate configuration settings are employed for a given performance evaluation use-case.

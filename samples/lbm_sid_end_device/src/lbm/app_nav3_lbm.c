@@ -4,10 +4,10 @@
 #include <app_ble_config.h>
 #include <app_subGHz_config.h>
 #if defined(CONFIG_GPIO)
-#include <state_notifier_gpio_backend.h>
+#include <state_notifier/notifier_gpio.h>
 #endif
 #if defined(CONFIG_LOG)
-#include <state_notifier_log_backend.h>
+#include <state_notifier/notifier_log.h>
 #endif
 
 #include <zephyr/logging/log.h>
