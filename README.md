@@ -26,7 +26,7 @@ Please note that while software enhancement is enabled and encouraged, validatio
 
 Before getting started, make sure you have a proper nRF Connect SDK development environment.
 Follow the official
-[Installation guide](https://developer.nordicsemi.com/nRF_Connect_SDK/doc/latest/nrf/installation/install_ncs.html).
+[Installation guide](https://docs.nordicsemi.com/bundle/ncs-2.6.1/page/nrf/installation/install_ncs.html).
 
 ### Initialization
 
